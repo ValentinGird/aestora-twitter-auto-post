@@ -7,33 +7,42 @@ import random
 import json
 from oauth2client.service_account import ServiceAccountCredentials
 
-TWEET_LOG_FILE = "tweets_log.json"
-
-
-def load_tweet_log():
-    """ Charge les logs des tweets envoyés """
-    if os.path.exists(TWEET_LOG_FILE):
-        with open(TWEET_LOG_FILE, "r") as file:
-            try:
-                return json.load(file)
-            except json.JSONDecodeError:
-                return []
-    return []
-
-
-def save_tweet_log(log):
-    """ Sauvegarde le log des tweets """
-    with open(TWEET_LOG_FILE, "w") as file:
-        json.dump(log, file, indent=4)
-
+LOG_FILE = "tweets_log.json"
 
 def count_tweets_last_24h():
-    """ Compte les tweets postés dans les dernières 24h """
-    logs = load_tweet_log()
+    """Compte le nombre de tweets postés dans les dernières 24 heures"""
     now = time.time()
-    recent_tweets = [t for t in logs if now - t["timestamp"] < 86400]  # Tweets des dernières 24h
+
+    # Vérifier si le fichier existe, sinon le créer
+    if not os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "w") as f:
+            json.dump({"tweets": []}, f)
+
+    # Lire le fichier correctement
+    with open(LOG_FILE, "r") as f:
+        try:
+            logs = json.load(f)  # Convertir la string JSON en dictionnaire
+        except json.JSONDecodeError:
+            logs = {"tweets": []}  # Si fichier corrompu, on le réinitialise
+    
+    recent_tweets = [t for t in logs["tweets"] if now - t["timestamp"] < 86400]
+    
     return len(recent_tweets)
 
+def log_tweet():
+    """Ajoute un tweet dans le log avec timestamp"""
+    now = time.time()
+
+    # Charger les logs existants
+    with open(LOG_FILE, "r") as f:
+        logs = json.load(f)
+
+    # Ajouter le tweet
+    logs["tweets"].append({"timestamp": now})
+
+    # Écrire le log mis à jour
+    with open(LOG_FILE, "w") as f:
+        json.dump(logs, f)
 
 def authenticate_twitter():
     """ Authentification à l'API Twitter """
@@ -58,36 +67,8 @@ def authenticate_twitter():
         access_token_secret=twitter_access_secret
     )
 
-
-def authenticate_google_sheets():
-    """ Authentification à l'API Google Sheets """
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
-    google_creds = os.getenv("GOOGLE_SHEETS_CREDENTIALS")
-    if not google_creds:
-        raise ValueError("🚨 ERREUR : La variable GOOGLE_SHEETS_CREDENTIALS n'est pas définie ! Vérifie Railway.")
-
-    try:
-        google_creds = json.loads(google_creds)
-    except json.JSONDecodeError:
-        raise ValueError("🚨 ERREUR : JSON mal formaté pour GOOGLE_SHEETS_CREDENTIALS !")
-
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
-    client = gspread.authorize(creds)
-    
-    print("✅ Connexion à Google Sheets réussie !")
-    
-    return client
-
-
-def get_next_tweet(sheet):
-    """ Récupère le prochain tweet à poster """
-    tweets = sheet.get_all_values()[1:]  # Ignore la première ligne (headers)
-    return tweets[0] if tweets else None
-
-
 def upload_image_v1(api_v1, image_url):
-    """ Télécharge et upload une image sur Twitter via l'API v1.1 """
+    """ Télécharge et upload une image sur Twitter via l'API v1.1, retourne le media_id """
     if not image_url or not image_url.startswith("http"):
         print("⚠️ Aucune image valide fournie. Le tweet sera posté sans image.")
         return None  
@@ -109,9 +90,8 @@ def upload_image_v1(api_v1, image_url):
     
     return media.media_id
 
-
 def post_tweet_v2(client, tweet_text, media_id=None):
-    """ Poste un tweet avec l'API v2 """
+    """ Poste un tweet avec l'API v2 en ajoutant un média si disponible """
     try:
         if media_id:
             response = client.create_tweet(text=tweet_text, media_ids=[media_id])
@@ -121,38 +101,77 @@ def post_tweet_v2(client, tweet_text, media_id=None):
         tweet_id = response.data["id"]
         print(f"✅ Tweet posté : https://twitter.com/user/status/{tweet_id}")
 
-        # Sauvegarde du tweet dans le log
-        log = load_tweet_log()
-        log.append({"timestamp": time.time(), "tweet_id": tweet_id})
-        save_tweet_log(log)
+        log_tweet()  # Enregistrer le tweet dans le log
+        
+        return tweet_id
 
     except tweepy.TweepyException as e:
         print(f"🚨 Erreur lors de la publication : {e}")
+        return None
 
+def authenticate_google_sheets():
+    """ Authentification à l'API Google Sheets """
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    
+    google_creds = os.getenv("GOOGLE_SHEETS_CREDENTIALS")
+    if not google_creds:
+        raise ValueError("🚨 ERREUR : La variable GOOGLE_SHEETS_CREDENTIALS n'est pas définie ! Vérifie Railway.")
+
+    try:
+        google_creds = json.loads(google_creds)
+    except json.JSONDecodeError:
+        raise ValueError("🚨 ERREUR : JSON mal formaté pour GOOGLE_SHEETS_CREDENTIALS !")
+
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
+    client = gspread.authorize(creds)
+    
+    print("✅ Connexion à Google Sheets réussie !")
+    
+    return client
+
+def get_next_tweet(sheet):
+    """ Récupère le prochain tweet à poster (toujours ligne 2) """
+    tweets = sheet.get_all_values()[1:]  
+    return tweets[0] if tweets else None
+
+def post_tweet(api_v1, api_v2, sheet, tweet_data):
+    """ Poste un tweet principal avec une image en utilisant API v1.1 pour l'image et API v2 pour le tweet """
+    try:
+        media_id = upload_image_v1(api_v1, tweet_data[1]) if tweet_data[1] else None
+        tweet_id = post_tweet_v2(api_v2, tweet_data[0], media_id)
+
+        # Si la colonne C contient un texte, le poster en réponse
+        if tweet_id and len(tweet_data) > 2 and tweet_data[2].strip():
+            post_tweet_v2(api_v2, tweet_data[2], reply_to=tweet_id)
+        
+        # Supprimer la ligne après publication
+        sheet.delete_rows(2)
+        print(f"✅ Tweet posté et supprimé de Google Sheets : {tweet_id}")
+
+    except Exception as e:
+        print(f"🚨 Erreur lors de la publication : {e}")
 
 def main():
     api_v1, api_v2 = authenticate_twitter()
     client = authenticate_google_sheets()
     sheet = client.open("X - Aestora").sheet1
 
-    while True:  # Le bot tourne en continu
+    while True:
         tweets_posted = count_tweets_last_24h()
-        if tweets_posted >= 5:
-            print("🚨 Limite de 5 tweets atteinte. Attente avant de réessayer...")
-            time.sleep(3600)  # Attente d'une heure avant de réessayer
-            continue
-        
-        tweet_data = get_next_tweet(sheet)
-        if tweet_data:
-            media_id = upload_image_v1(api_v1, tweet_data[1]) if tweet_data[1] else None
-            post_tweet_v2(api_v2, tweet_data[0], media_id)
-            sheet.delete_rows(2)
-            delay = random.randint(7200, 21600)
-            print(f"⏳ Prochain tweet dans {delay // 3600} heures")
-            time.sleep(delay)
+
+        if tweets_posted < 5:
+            tweet_data = get_next_tweet(sheet)
+            if tweet_data:
+                post_tweet(api_v1, api_v2, sheet, tweet_data)
+                delay = random.randint(7200, 21600)  # Attente aléatoire entre 2h et 6h
+                print(f"⏳ Prochain tweet dans {delay // 3600} heures")
+                time.sleep(delay)
+            else:
+                print("❌ Plus de tweets disponibles, en attente de nouveaux...")
+                time.sleep(3600)  # Vérifier à nouveau après 1h
         else:
-            print("❌ Plus de tweets disponibles, en attente de nouveaux...")
-            time.sleep(1800)  # Vérifie à nouveau toutes les 30 min
+            print("🚨 Limite de 5 tweets atteinte sur 24h. En attente avant de recommencer...")
+            time.sleep(3600)  # Vérifier toutes les heures
 
 if __name__ == "__main__":
     main()
