@@ -53,22 +53,18 @@ def upload_image_v1(api_v1, image_url):
     
     return media.media_id
 
-def post_tweet_v2(api_v2, text, media_id=None, reply_to=None):
-    """ Poste un tweet via l'API v2 avec possibilité d'attacher une image """
+def post_tweet_v2(client, tweet_text, media_id=None):
+    """ Poste un tweet avec l'API v2 en ajoutant un média si disponible """
     try:
-        payload = {"text": text}
         if media_id:
-            payload["media"] = {"media_ids": [media_id]}
-        if reply_to:
-            payload["reply"] = {"in_reply_to_tweet_id": reply_to}
+            response = client.create_tweet(text=tweet_text, media_ids=[media_id])
+        else:
+            response = client.create_tweet(text=tweet_text)
 
-        tweet = api_v2.create_tweet(**payload)
-        print(f"✅ Tweet posté : {tweet.data['id']}")
-        return tweet.data["id"]
+        print(f"✅ Tweet posté : https://twitter.com/user/status/{response.data['id']}")
 
-    except tweepy.TweepError as e:
-        print(f"🚨 Erreur lors de la publication : {e.response.status_code} - {e.response.text}")
-        return None
+    except tweepy.TweepyException as e:
+        print(f"🚨 Erreur lors de la publication : {e}")
 
 def authenticate_google_sheets():
     """ Authentification à l'API Google Sheets """
