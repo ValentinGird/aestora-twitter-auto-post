@@ -58,7 +58,7 @@ def post_tweet(api, sheet, tweet_data):
 def main():
     api = authenticate_twitter()
     client = authenticate_google_sheets()
-    sheet = client.open("NomDeTaGoogleSheet").sheet1
+    sheet = client.open("X - Aestora").sheet1
     
     for _ in range(5):  # 5 posts par jour
         tweet_data = get_next_tweet(sheet)
