@@ -9,23 +9,40 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 def authenticate_twitter():
     """ Authentification à l'API Twitter """
-    auth = tweepy.OAuthHandler(os.getenv("TWITTER_API_KEY"), os.getenv("TWITTER_API_SECRET"))
-    auth.set_access_token(os.getenv("TWITTER_ACCESS_TOKEN"), os.getenv("TWITTER_ACCESS_SECRET"))
+    twitter_api_key = os.getenv("TWITTER_API_KEY")
+    twitter_api_secret = os.getenv("TWITTER_API_SECRET")
+    twitter_access_token = os.getenv("TWITTER_ACCESS_TOKEN")
+    twitter_access_secret = os.getenv("TWITTER_ACCESS_SECRET")
+
+    # Vérification des clés Twitter
+    if not all([twitter_api_key, twitter_api_secret, twitter_access_token, twitter_access_secret]):
+        raise ValueError("🚨 ERREUR : Une ou plusieurs variables Twitter sont manquantes. Vérifie Railway.")
+
+    auth = tweepy.OAuthHandler(twitter_api_key, twitter_api_secret)
+    auth.set_access_token(twitter_access_token, twitter_access_secret)
+    
+    print("✅ Connexion à l'API Twitter réussie !")
+    
     return tweepy.API(auth, wait_on_rate_limit=True)
 
 def authenticate_google_sheets():
     """ Authentification à l'API Google Sheets via variable d'environnement """
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
-    # Vérification que la variable d'environnement est bien chargée
+
     google_creds = os.getenv("GOOGLE_SHEETS_CREDENTIALS")
     if not google_creds:
-        raise ValueError("🚨 ERREUR : La variable GOOGLE_SHEETS_CREDENTIALS n'est pas chargée ! Vérifie Railway.")
+        raise ValueError("🚨 ERREUR : La variable GOOGLE_SHEETS_CREDENTIALS n'est pas définie ! Vérifie Railway.")
 
-    google_creds = json.loads(google_creds)  # Convertir la variable en JSON utilisable
+    try:
+        google_creds = json.loads(google_creds)  # Convertir la variable en JSON utilisable
+    except json.JSONDecodeError:
+        raise ValueError("🚨 ERREUR : Le JSON GOOGLE_SHEETS_CREDENTIALS est mal formaté ! Vérifie les retours à la ligne.")
 
     creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
     client = gspread.authorize(creds)
+    
+    print("✅ Connexion à Google Sheets réussie !")
+    
     return client
 
 def get_next_tweet(sheet):
@@ -35,19 +52,32 @@ def get_next_tweet(sheet):
 
 def upload_image(api, image_url):
     """ Télécharge et upload une image sur Twitter, retourne le media_id """
+    if not image_url or not image_url.startswith("http"):
+        print("⚠️ Aucune image valide fournie. Le tweet sera posté sans image.")
+        return None  # Retourne None si aucune image valide n'est fournie
+
     filename = "temp.jpg"
     response = requests.get(image_url)
+    
+    if response.status_code != 200:
+        print(f"⚠️ Erreur lors du téléchargement de l'image : {response.status_code}")
+        return None
+
     with open(filename, "wb") as file:
         file.write(response.content)
+
     media = api.media_upload(filename)
     os.remove(filename)
+    
     return media.media_id
 
 def post_tweet(api, sheet, tweet_data):
     """ Poste un tweet principal avec une image, puis un tweet en réponse si nécessaire """
     try:
-        media_id = upload_image(api, tweet_data[1])
-        tweet = api.update_status(status=tweet_data[0], media_ids=[media_id])
+        media_id = upload_image(api, tweet_data[1]) if tweet_data[1] else None
+        media_ids = [media_id] if media_id else None
+        
+        tweet = api.update_status(status=tweet_data[0], media_ids=media_ids)
         
         # Si la colonne C contient un texte, le poster en réponse
         if len(tweet_data) > 2 and tweet_data[2].strip():
@@ -55,9 +85,10 @@ def post_tweet(api, sheet, tweet_data):
         
         # Supprimer la ligne après publication
         sheet.delete_rows(2)
-        print(f"Tweet posté et supprimé de Google Sheets : {tweet.id}")
+        print(f"✅ Tweet posté et supprimé de Google Sheets : {tweet.id}")
+    
     except Exception as e:
-        print(f"Erreur lors de la publication : {e}")
+        print(f"🚨 Erreur lors de la publication : {e}")
 
 def main():
     api = authenticate_twitter()
@@ -69,12 +100,11 @@ def main():
         if tweet_data:
             post_tweet(api, sheet, tweet_data)
             delay = random.randint(7200, 21600)  # Attente aléatoire entre 2h et 6h
-            print(f"Prochain tweet dans {delay // 3600} heures")
+            print(f"⏳ Prochain tweet dans {delay // 3600} heures")
             time.sleep(delay)
         else:
-            print("Plus de tweets disponibles, en attente de nouveaux...")
+            print("❌ Plus de tweets disponibles, en attente de nouveaux...")
             break
 
 if __name__ == "__main__":
     main()
-    
