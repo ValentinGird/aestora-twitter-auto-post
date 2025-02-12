@@ -144,10 +144,17 @@ def count_tweets_last_24h():
     else:
         logs = []
 
-    recent_tweets = [t for t in logs if now - t["timestamp"] < 86400]
+    # Supprimer les tweets plus vieux que 24h
+    logs = [t for t in logs if now - t["timestamp"] < 86400]
 
-    print(f"📊 Tweets postés dans les 24 dernières heures : {len(recent_tweets)}")
-    return len(recent_tweets)
+    # Sauvegarder la nouvelle liste (nettoyage automatique)
+    with open(TWEET_LOG_FILE, "w", encoding="utf-8") as file:
+        json.dump(logs, file, indent=4)
+
+    tweet_count = len(logs)
+    print(f"📊 {tweet_count}/5 tweets postés dans les dernières 24h")
+    
+    return tweet_count
 
 
 def post_tweet(api_v1, api_v2, sheet, tweet_data):
@@ -187,7 +194,7 @@ def main():
                 print("❌ Plus de tweets disponibles, en attente de nouveaux...")
                 time.sleep(3600)
         else:
-            print("🚨 Limite atteinte (5 tweets en 24h), attente de la prochaine fenêtre...")
+            print("🚨 Limite atteinte (5/5 tweets en 24h), attente du reset...")
             time.sleep(3600)
 
 
