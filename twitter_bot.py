@@ -17,9 +17,13 @@ def authenticate_google_sheets():
     """ Authentification à l'API Google Sheets via variable d'environnement """
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Charger la clé depuis la variable d’environnement
-    google_creds = json.loads(os.getenv("GOOGLE_SHEETS_CREDENTIALS"))
-    
+    # Vérification que la variable d'environnement est bien chargée
+    google_creds = os.getenv("GOOGLE_SHEETS_CREDENTIALS")
+    if not google_creds:
+        raise ValueError("🚨 ERREUR : La variable GOOGLE_SHEETS_CREDENTIALS n'est pas chargée ! Vérifie Railway.")
+
+    google_creds = json.loads(google_creds)  # Convertir la variable en JSON utilisable
+
     creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
     client = gspread.authorize(creds)
     return client
