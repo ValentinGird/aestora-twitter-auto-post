@@ -40,7 +40,6 @@ def authenticate_twitter():
         access_token_secret=twitter_access_secret
     )
 
-
 def authenticate_google_sheets():
     """ Authentification à l'API Google Sheets """
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -54,20 +53,22 @@ def authenticate_google_sheets():
     print("✅ Connexion à Google Sheets réussie !")
     return client
 
-
 def load_used_images():
     """ Charge la liste des images utilisées depuis le fichier """
     if os.path.exists(USED_IMAGES_FILE):
         with open(USED_IMAGES_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
+            used_images = json.load(file)
+            print(f"📂 {len(used_images)} images utilisées chargées depuis le fichier.")
+            return used_images
+    print("📂 Aucune image utilisée trouvée.")
     return []
-
 
 def save_used_image(image_url):
     """ Enregistre une image utilisée et supprime la plus ancienne si nécessaire """
     used_images = load_used_images()
 
     if image_url in used_images:
+        print("🔄 Image déjà utilisée, pas d'ajout.")
         return  # Ne pas ajouter de doublon
 
     used_images.append(image_url)
@@ -81,7 +82,7 @@ def save_used_image(image_url):
         json.dump(used_images, file, indent=4)
 
     print(f"✅ Nouvelle image enregistrée : {image_url}")
-
+    print(f"📊 Nombre total d'images enregistrées : {len(used_images)}")
 
 def get_random_tweet(sheet):
     """ Récupère une ligne aléatoire qui n'a pas été postée récemment """
@@ -109,7 +110,6 @@ def get_random_tweet(sheet):
 
     return tweet_data
 
-
 def upload_images_v1(api_v1, image_urls):
     """ Télécharge et upload une ou plusieurs images sur Twitter """
     media_ids = []
@@ -128,33 +128,38 @@ def upload_images_v1(api_v1, image_urls):
                 print(f"⚠️ Erreur de téléchargement image : {response.status_code}")
     return media_ids
 
-
 def post_tweet_v2(client, tweet_text, media_ids=None, reply_to=None):
     """ Poste un tweet en ajoutant des médias et/ou en tant que réponse """
     try:
         response = client.create_tweet(text=tweet_text, media_ids=media_ids, in_reply_to_tweet_id=reply_to)
         tweet_id = response.data['id']
         print(f"✅ Tweet posté : https://twitter.com/user/status/{tweet_id}")
+
+        # Enregistrer le tweet posté avec un horodatage
+        log_tweet(tweet_id)
+
         return tweet_id
     except tweepy.TweepyException as e:
         print(f"🚨 Erreur de publication : {e}")
         return None
 
+def log_tweet(tweet_id):
+    """ Enregistre un tweet posté avec un horodatage """
+    now = int(time.time())
+    log_entry = {"tweet_id": tweet_id, "timestamp": now}
 
-def post_tweet(api_v1, api_v2, sheet):
-    """ Poste un tweet aléatoire avec ses images et une réponse """
-    tweet_data = get_random_tweet(sheet)
-    if not tweet_data:
-        return
+    if os.path.exists(TWEET_LOG_FILE):
+        with open(TWEET_LOG_FILE, "r", encoding="utf-8") as file:
+            logs = json.load(file)
+    else:
+        logs = []
 
-    text, image1, image2, reply_text = tweet_data[0], tweet_data[1], tweet_data[2], tweet_data[3]
-    media_ids = upload_images_v1(api_v1, [image1, image2])
+    logs.append(log_entry)
 
-    tweet_id = post_tweet_v2(api_v2, text, media_ids)
+    with open(TWEET_LOG_FILE, "w", encoding="utf-8") as file:
+        json.dump(logs, file, indent=4)
 
-    if tweet_id and reply_text.strip():
-        post_tweet_v2(api_v2, reply_text, reply_to=tweet_id)
-
+    print(f"📝 Tweet {tweet_id} enregistré dans le journal.")
 
 def count_tweets_last_24h():
     """ Compte les tweets postés dans les dernières 24h """
@@ -164,14 +169,34 @@ def count_tweets_last_24h():
             logs = json.load(file)
     else:
         logs = []
-    logs = [t for t in logs if now - t["timestamp"] < 86400]
-    with open(TWEET_LOG_FILE, "w", encoding="utf-8") as file:
-        json.dump(logs, file, indent=4)
 
-    tweet_count = len(logs)
+    # Filtrer les tweets postés dans les dernières 24 heures
+    recent_tweets = [t for t in logs if now - t["timestamp"] < 86400]
+
+    with open(TWEET_LOG_FILE, "w", encoding="utf-8") as file:
+        json.dump(recent_tweets, file, indent=4)
+
+    tweet_count = len(recent_tweets)
     print(f"📊 Nombre de tweets postés dans les dernières 24h : {tweet_count}/5")
     return tweet_count
 
+def post_tweet(api_v1, api_v2, sheet):
+    """ Poste un tweet aléatoire avec ses images et une réponse """
+    tweet_data = get_random_tweet(sheet)
+    if not tweet_data:
+        print("❌ Aucun tweet à poster.")
+        return
+
+    text, image1, image2, reply_text = tweet_data[0], tweet_data[1], tweet_data[2], tweet_data[3]
+    print(f"📝 Préparation du tweet : {text}")
+
+    media_ids = upload_images_v1(api_v1, [image1, image2])
+
+    tweet_id = post_tweet_v2(api_v2, text, media_ids)
+
+    if tweet_id and reply_text.strip():
+        print("🔄 Poste de la réponse au tweet...")
+        post_tweet_v2(api_v2, reply_text, reply_to=tweet_id)
 
 def main():
     api_v1, api_v2 = authenticate_twitter()
@@ -179,15 +204,17 @@ def main():
     sheet = client.open("X - Aestora").sheet1
 
     while True:
-        if count_tweets_last_24h() < 5:
+        tweet_count = count_tweets_last_24h()
+        if tweet_count < 5:
+            print(f"🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Préparation pour poster un nouveau tweet...")
             post_tweet(api_v1, api_v2, sheet)
             delay = random.randint(7200, 21600)
             print(f"⏳ Prochain tweet dans {delay // 3600} heures ({delay} secondes)")
             time.sleep(delay)
         else:
-            print("🚨 Limite atteinte, attente du reset...")
+            print("🚨 Limite de 5 tweets atteinte, attente du reset...")
             time.sleep(3600)
 
-
 if __name__ == "__main__":
+    print("🏁 Démarrage du script...")
     main()
