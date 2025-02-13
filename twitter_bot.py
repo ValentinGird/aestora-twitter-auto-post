@@ -143,22 +143,6 @@ def post_tweet_v2(client, tweet_text, media_ids=None, reply_to=None):
         print(f"🚨 Erreur de publication : {e}")
         return None
 
-def post_to_threads(access_token, user_id, message):
-    """ Publie sur Threads via l'API Graph de Threads """
-    url = f"https://graph.threads.net/v1.0/{user_id}/threads_posts"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "message": message
-    }
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 200:
-        print("✅ Publié sur Threads avec succès !")
-    else:
-        print(f"⚠️ Erreur lors de la publication sur Threads : {response.status_code}, {response.text}")
-
 def log_tweet(tweet_id):
     """ Enregistre un tweet posté avec un horodatage """
     now = int(time.time())
@@ -196,7 +180,7 @@ def count_tweets_last_24h():
     print(f"📊 Nombre de tweets postés dans les dernières 24h : {tweet_count}/5")
     return tweet_count
 
-def post_tweet(api_v1, api_v2, sheet, threads_access_token, threads_user_id):
+def post_tweet(api_v1, api_v2, sheet):
     """ Poste un tweet aléatoire avec ses images et une réponse """
     tweet_data = get_random_tweet(sheet)
     if not tweet_data:
@@ -214,21 +198,16 @@ def post_tweet(api_v1, api_v2, sheet, threads_access_token, threads_user_id):
         print("🔄 Poste de la réponse au tweet...")
         post_tweet_v2(api_v2, reply_text, reply_to=tweet_id)
 
-    # Publier sur Threads
-    post_to_threads(threads_access_token, threads_user_id, text)
-
 def main():
     api_v1, api_v2 = authenticate_twitter()
     client = authenticate_google_sheets()
     sheet = client.open("X - Aestora").sheet1
-    threads_access_token = os.getenv("THREADS_ACCESS_TOKEN")
-    threads_user_id = os.getenv("THREADS_USER_ID")
 
     while True:
         tweet_count = count_tweets_last_24h()
         if tweet_count < 5:
             print(f"🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Préparation pour poster un nouveau tweet...")
-            post_tweet(api_v1, api_v2, sheet, threads_access_token, threads_user_id)
+            post_tweet(api_v1, api_v2, sheet)
             delay = random.randint(7200, 21600)
             print(f"⏳ Prochain tweet dans {delay // 3600} heures ({delay} secondes)")
             time.sleep(delay)
