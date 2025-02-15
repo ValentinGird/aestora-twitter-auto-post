@@ -177,7 +177,7 @@ def count_tweets_last_24h():
         json.dump(recent_tweets, file, indent=4)
 
     tweet_count = len(recent_tweets)
-    print(f"📊 Nombre de tweets postés dans les dernières 24h : {tweet_count}/5")
+    print(f"📊 Nombre de tweets postés dans les dernières 24h : {tweet_count}/10")
     return tweet_count
 
 def post_tweet(api_v1, api_v2, sheet):
@@ -205,14 +205,14 @@ def main():
 
     while True:
         tweet_count = count_tweets_last_24h()
-        if tweet_count < 5:
+        if tweet_count < 10:
             print(f"🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Préparation pour poster un nouveau tweet...")
             post_tweet(api_v1, api_v2, sheet)
             delay = random.randint(7200, 21600)
             print(f"⏳ Prochain tweet dans {delay // 3600} heures ({delay} secondes)")
             time.sleep(delay)
         else:
-            print("🚨 Limite de 5 tweets atteinte, attente du reset...")
+            print("🚨 Limite de 10 tweets atteinte, attente du reset...")
             time.sleep(3600)
 
 if __name__ == "__main__":
